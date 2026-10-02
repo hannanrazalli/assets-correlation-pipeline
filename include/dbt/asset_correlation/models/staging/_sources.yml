@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: assets_sources
+    database: AwsDataCatalog
+    schema: asset_correlation
+    tables:
+      - name: raw_forex
+        columns:
+          - name: date
+            tests:
+              - not_null
+      - name: raw_stocks
+        columns:
+          - name: date
+            tests:
+              - not_null
