@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: fct_assets
+    columns:
+      - name: stock_key
+        tests:
+          - unique
+          - not_null
+        
+      - name: price_date
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: price_date
+
+      - name: ticker_symbol
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_assets')
+                field: ticker

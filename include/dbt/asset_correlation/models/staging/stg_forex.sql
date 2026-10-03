@@ -6,7 +6,7 @@ WITH raw_forex AS (
 
 renamed_and_casted AS (
     SELECT
-        cast(date as date) as date,
+        cast(date as date) as forex_date,
         cast(base as varchar) as base_currency,
         cast(quote as varchar) as target_currency,
         cast(rate as double) as exchange_rate,

@@ -8,7 +8,7 @@ deduplicate as (
     select
         *,
         row_number() over(
-            partition by date, base_currency, target_currency
+            partition by forex_date, base_currency, target_currency
             order by _staged_at
         ) as rn
     from stg_forex
@@ -16,9 +16,9 @@ deduplicate as (
 
 clean_forex as (
     select
-        {{ dbt_utils.generate_surrogate_key(['date', 'base_currency', 'target_currency']) }} as forex_key,
+        {{ dbt_utils.generate_surrogate_key(['forex_date', 'base_currency', 'target_currency']) }} as forex_key,
 
-        date,
+        forex_date,
         base_currency,
         target_currency,
         exchange_rate,

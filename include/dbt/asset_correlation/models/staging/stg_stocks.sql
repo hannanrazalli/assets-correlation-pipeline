@@ -20,7 +20,14 @@ renamed_and_casted as (
         cast(klse as double) as close_price
     from raw_stocks
     where klse is not null
+),
+
+final_stg as (
+    select
+        *,
+        {{ audit_columns('staging') }}
+    from renamed_and_casted
 )
 
 select *
-from renamed_and_casted
+from final_stg

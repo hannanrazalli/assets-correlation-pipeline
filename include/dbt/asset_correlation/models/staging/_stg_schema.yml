@@ -23,14 +23,14 @@ models:
 
   - name: stg_stocks
     columns:
-      - name: gspc_close
+      - name: close_price
         tests:
           - not_null:
               config:
-                severity: warn
+                severity: error
           
-      - name: klse_close
+      - name: ticker_symbol
         tests:
-          - not_null:
-              config:
-                severity: warn
+          - accepted_values:
+              arguments:
+                values: ["^GSPC", "^KLSE"]

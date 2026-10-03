@@ -11,8 +11,6 @@ flattened_dates as (
 )
 
 select
-    cast(date_format(date_val, '%Y%m%d') as integer) as date_id,
-    
     cast(date_val as date) as price_date,
     
     year(date_val) as year,
