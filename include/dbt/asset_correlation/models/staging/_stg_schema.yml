@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: stg_forex
+    columns:
+      - name: base_currency
+        tests:
+          - not_null:
+              config:
+                severity: error
+          - accepted_values:
+              arguments:
+                values: ["USD"]
+
+      - name: target_currency
+        tests:
+          - not_null:
+              config:
+                severity: error
+          - accepted_values:
+              arguments:
+                values: ["MYR"]
+
+  - name: stg_stocks
+    columns:
+      - name: gspc_close
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          
+      - name: klse_close
+        tests:
+          - not_null:
+              config:
+                severity: warn

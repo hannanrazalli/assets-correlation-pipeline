@@ -1,8 +1,7 @@
 {{ config(materialized='view') }}
 
 WITH raw_forex AS (
-    SELECT *
-    FROM {{ source('assets_sources', 'raw_forex') }}
+    SELECT * FROM {{ source('assets_sources', 'raw_forex') }}
 ),
 
 renamed_and_casted AS (
@@ -14,7 +13,6 @@ renamed_and_casted AS (
 
         {{ audit_columns('staging') }}
     FROM raw_forex
-    WHERE date IS NOT NULL
 )
 
 SELECT *

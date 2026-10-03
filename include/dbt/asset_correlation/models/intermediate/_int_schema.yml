@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: int_forex
+    columns:
+      - name: forex_key
+        tests:
+          - unique:
+              config:
+                severity: error
+
+          - not_null:
+              config:
+                severity: error
+
+  - name: int_stocks
+    columns:
+      - name: stock_key
+        tests:
+          - unique:
+              config:
+                severity: error
+
+          - not_null:
+              config:
+                severity: error
