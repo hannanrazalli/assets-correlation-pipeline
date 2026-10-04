@@ -9,7 +9,7 @@ deduplicate as (
         *,
         row_number() over(
             partition by forex_date, base_currency, target_currency
-            order by _staged_at
+            order by _staged_at desc
         ) as rn
     from stg_forex
 ),

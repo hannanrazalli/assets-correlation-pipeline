@@ -21,3 +21,7 @@ models:
               arguments:
                 to: ref('dim_assets')
                 field: ticker
+
+      - name: close_price_myr
+        tests:
+          - not_null

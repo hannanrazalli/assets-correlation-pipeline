@@ -21,6 +21,18 @@ models:
               arguments:
                 values: ["MYR"]
 
+      - name: forex_date
+        tests:
+          - not_null:
+              config:
+                severity: error
+
+      - name: exchange_rate
+        tests:
+          - not_null:
+              config:
+                severity: error
+
   - name: stg_stocks
     columns:
       - name: close_price
@@ -34,3 +46,9 @@ models:
           - accepted_values:
               arguments:
                 values: ["^GSPC", "^KLSE"]
+
+      - name: price_date
+        tests:
+          - not_null:
+              config:
+                severity: error

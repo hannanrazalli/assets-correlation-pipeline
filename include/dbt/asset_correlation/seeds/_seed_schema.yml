@@ -1,0 +1,7 @@
+seeds:
+  - name: dim_assets
+    columns:
+      - name: ticker
+        tests:
+          - unique
+          - not_null
