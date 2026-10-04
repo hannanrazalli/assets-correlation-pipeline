@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 
 import requests
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -34,8 +37,8 @@ def forex(ds: str | None = None):
     if not ds:
         ds = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
-    url = os.getenv("FOREX_URL")
-    params = {"base": "USD", "quotes": "MYR", "from": ds}
+    url = os.getenv("FOREX_URL", "https://api.frankfurter.dev/v2/rates")
+    params = {"base": "USD", "quotes": "MYR", "date": ds}
 
     response = requests.get(url, params=params)
     response.raise_for_status()

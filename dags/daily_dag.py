@@ -30,7 +30,7 @@ def asset_pipeline():
 
         forex(ds=ds)
 
-    @task(task_id="daily_forex")
+    @task(task_id="daily_stocks")
     def daily_stocks(ds=None):
         from include.ingestions.api.stocks import stocks
 
@@ -38,13 +38,13 @@ def asset_pipeline():
 
     crawler_forex = GlueCrawlerRunOperator(
         task_id="run_forex_crawler",
-        crawler_name="forex_crawler",
+        crawler_name="forex_crawler_asset_correlation",
         wait_for_completion=True,
     )
 
     crawler_stocks = GlueCrawlerRunOperator(
         task_id="run_stocks_crawler",
-        crawler_name="stocks_crawler",
+        crawler_name="stocks_crawler_asset_correlation",
         wait_for_completion=True,
     )
 
