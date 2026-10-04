@@ -1,7 +1,7 @@
 {{ config(materialized='view') }}
 
-with stg_stocks as (
-    select * from {{ ref('stg_stocks') }}
+with stg_assets as (
+    select * from {{ ref('stg_assets') }}
 ),
 
 deduplicate as (
@@ -9,9 +9,9 @@ deduplicate as (
         *,
         row_number() over(
             partition by price_date, ticker_symbol
-            order by _staged_at
+            order by _staged_at desc
         ) as rn
-    from stg_stocks
+    from stg_assets
 ),
 
 clean_stocks as (
