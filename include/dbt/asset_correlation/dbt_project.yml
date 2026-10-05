@@ -1,6 +1,9 @@
 name: 'asset_correlation'
 version: '1.0.0'
 
+flags:
+  indirect_selection: cautious
+
 profile: 'asset_correlation'
 
 model-paths: ["models"]

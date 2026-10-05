@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='stock_key',
+    unique_key='asset_key',
     table_type='iceberg',
     on_schema_change='append_new_column',
 ) }}
@@ -14,11 +14,17 @@ int_assets as (
     select * from {{ ref('int_assets') }}
 ),
 
+dim_assets as (
+    select * from {{ ref('dim_assets') }}
+),
+
 joined as (
     select
         s.asset_key,
         s.price_date,
         s.ticker_symbol,
+        a.asset_name,
+        a.asset_class,
         s.close_price,
 
         f.exchange_rate,
@@ -30,6 +36,8 @@ joined as (
     from int_assets s
     left join int_forex f
         on s.price_date = f.forex_date
+    left join dim_assets a
+        on s.ticker_symbol = a.ticker
 ),
 
 final_fact as (

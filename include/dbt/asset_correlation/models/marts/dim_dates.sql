@@ -1,3 +1,5 @@
+-- depends_on: {{ ref('int_assets') }}
+
 {{ config(materialized='table') }}
 
 with date_range as (

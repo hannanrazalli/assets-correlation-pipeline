@@ -2,16 +2,19 @@ version: 2
 
 sources:
   - name: assets_sources
-    database: AwsDataCatalog
+    description: "Raw data sources for forex, stocks, bitcoin and gold ingested from frankfurter and yfinance"
+    database: awsdatacatalog
     schema: asset_correlation
     tables:
       - name: raw_forex
+        description: "Daily exchange rate from frankfurter for US vs MYR"
         columns:
           - name: date
             tests:
               - not_null
 
       - name: raw_stocks
+        description: "Daily close price for SP500 & KLCI stocks"
         columns:
           - name: date
             tests:
