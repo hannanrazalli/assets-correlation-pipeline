@@ -25,3 +25,27 @@ models:
       - name: close_price_myr
         tests:
           - not_null
+
+  - name: fct_daily_returns
+    columns:
+      - name: price_date
+        tests:
+          - not_null
+
+  - name: fct_asset_correlation
+    columns:
+      - name: correlation_30d
+        tests:
+          - not_null
+
+      - name: correlation_90d
+        tests:
+          - not_null
+
+      - name: correlation_365d
+        tests:
+          - not_null
+
+      - name: price_date
+        tests:
+          - not_null

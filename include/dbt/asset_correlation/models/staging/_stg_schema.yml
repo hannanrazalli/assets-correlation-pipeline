@@ -33,7 +33,7 @@ models:
               config:
                 severity: error
 
-  - name: stg_stocks
+  - name: stg_assets
     columns:
       - name: close_price
         tests:
