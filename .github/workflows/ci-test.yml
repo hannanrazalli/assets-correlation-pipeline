@@ -1,10 +1,10 @@
 name: CI Test Asset Correlation
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   code_linter:
