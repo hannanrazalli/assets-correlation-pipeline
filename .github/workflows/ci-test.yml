@@ -66,8 +66,8 @@ jobs:
         run: |
           cd include/dbt/asset_correlation
 
-          cat << EOF >> profiles.yml
-          practice_athena:
+          cat << EOF > profiles.yml
+          asset_correlation:
             target: dev
             outputs:
               dev:
