@@ -1,9 +1,9 @@
 version: 2
 
 models:
-  - name: int_stocks
+  - name: int_assets
     columns:
-      - name: stock_key
+      - name: asset_key
         tests:
           - unique:
               config:

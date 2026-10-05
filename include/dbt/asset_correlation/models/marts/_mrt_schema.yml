@@ -3,7 +3,7 @@ version: 2
 models:
   - name: fct_assets
     columns:
-      - name: stock_key
+      - name: asset_key
         tests:
           - unique
           - not_null

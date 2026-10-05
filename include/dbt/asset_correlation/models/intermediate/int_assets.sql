@@ -14,9 +14,9 @@ deduplicate as (
     from stg_assets
 ),
 
-clean_stocks as (
+clean_assets as (
     select
-        {{ dbt_utils.generate_surrogate_key(['price_date', 'ticker_symbol']) }} as stock_key,
+        {{ dbt_utils.generate_surrogate_key(['price_date', 'ticker_symbol']) }} as asset_key,
 
         price_date,
         ticker_symbol,
@@ -28,4 +28,4 @@ clean_stocks as (
 )
 
 select *
-from clean_stocks
+from clean_assets

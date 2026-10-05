@@ -10,13 +10,13 @@ with int_forex as (
     select * from {{ ref('int_forex') }}
 ),
 
-int_stocks as (
+int_assets as (
     select * from {{ ref('int_assets') }}
 ),
 
 joined as (
     select
-        s.stock_key,
+        s.asset_key,
         s.price_date,
         s.ticker_symbol,
         s.close_price,
@@ -26,8 +26,8 @@ joined as (
         case
             when s.ticker_symbol = '^KLSE' then s.close_price
             else round(s.close_price * coalesce(f.exchange_rate, 1.0), 2)
-        end as close_price_myr,
-    from int_stocks s
+        end as close_price_myr
+    from int_assets s
     left join int_forex f
         on s.price_date = f.forex_date
 ),
