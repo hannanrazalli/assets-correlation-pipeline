@@ -41,7 +41,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script_stop: true
           script: |
-            cd ~/airflow-practice-off1
+            cd ~/assets-correlation-pipeline
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
@@ -55,7 +55,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script_stop: true
           script: |
-            cd ~/airflow-practice-off1
+            cd ~/assets-correlation-pipeline
             astro dev restart
             docker ps
 
