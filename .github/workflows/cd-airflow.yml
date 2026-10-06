@@ -1,0 +1,80 @@
+name: CD - Deploy Airflow to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_restart: ${{ steps.filter.outputs.rebuild }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check which files changed
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rebuild:
+              - 'Dockerfile'
+              - 'requirements.txt'
+              - 'packages.txt'
+
+  deploy:
+    needs: check-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Pull latest code on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd ~/airflow-practice-off1
+            git fetch origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+
+      - name: Restart Airflow (only if image files changed)
+        if: needs.check-changes.outputs.needs_restart == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd ~/airflow-practice-off1
+            astro dev restart
+            docker ps
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            for i in $(seq 1 12); do
+              STATUS=$(curl -s http://localhost:8080/api/v2/monitor/health | grep -o '"status":"healthy"' | wc -l)
+              if [ "$STATUS" -ge "2" ]; then
+                echo "Airflow is healthy."
+                exit 0
+              fi
+              echo "Attempt $i: not healthy yet, waiting 10s..."
+              sleep 10
+            done
+            echo "Airflow failed health check after 120 seconds."
+            exit 1
