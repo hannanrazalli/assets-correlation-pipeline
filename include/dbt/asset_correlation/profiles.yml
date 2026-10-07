@@ -1,0 +1,13 @@
+asset_correlation:
+  outputs:
+    dev:
+      aws_profile_name: default
+      database: awsdatacatalog
+      region_name: ap-southeast-1
+      s3_data_dir: s3://asset-correlation-pipeline-212105053682-ap-southeast-1-an/dbt-data/
+      s3_staging_dir: s3://asset-correlation-pipeline-212105053682-ap-southeast-1-an/athena-results/
+      schema: asset_correlation
+      threads: 4
+      type: athena
+      work_group: primary
+  target: dev

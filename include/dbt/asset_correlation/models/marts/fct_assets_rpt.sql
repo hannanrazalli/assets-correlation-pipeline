@@ -11,8 +11,13 @@ price_pivoted as (
         price_date,
         max(case when ticker_symbol = '^GSPC' then close_price_myr end) as sp500_close,
         max(case when ticker_symbol = '^KLSE' then close_price_myr end) as klci_close,
+        max(case when ticker_symbol = 'BTC_USD' then close_price_myr end) as btc_close,
+        max(case when ticker_symbol = 'GLD' then close_price_myr end) as gld_close,
+
         max(case when ticker_symbol = '^GSPC' then daily_returns_pct end) as sp500_return,
-        max(case when ticker_symbol = '^KLSE' then daily_returns_pct end) as klci_return
+        max(case when ticker_symbol = '^KLSE' then daily_returns_pct end) as klci_return,
+        max(case when ticker_symbol = 'BTC_USD' then daily_returns_pct end) as btc_return,
+        max(case when ticker_symbol = 'GLD' then daily_returns_pct end) as gold_return
     from {{ ref('fct_daily_returns') }}
     group by price_date
 ),
@@ -27,12 +32,20 @@ fact_report as (
 
         p.sp500_close,
         p.klci_close,
+        p.btc_close,
+        p.gld_close,
+
         p.sp500_return,
         p.klci_return,
+        p.btc_return,
+        p.gold_return,
 
-        c.correlation_30d,
-        c.correlation_90d,
-        c.correlation_365d
+        c.corr_sp500_klse_30d,
+        c.corr_sp500_btc_30d,
+        c.corr_sp500_gold_30d,
+        c.corr_klse_btc_30d,
+        c.corr_klse_gold_30d,
+        c.corr_btc_gold_30d
 
     from dim_dates d
     left join price_pivoted p

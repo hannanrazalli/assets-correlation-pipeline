@@ -19,3 +19,17 @@ sources:
           - name: date
             tests:
               - not_null
+
+      - name: raw_bitcoin
+        description: "Daily close price for Bitcoin USD"
+        columns:
+          - name: date
+            tests:
+              - not_null
+
+      - name: raw_gold
+        description: "Daily close price for SPDR Gold Shares"
+        columns:
+          - name: date
+            tests:
+              - not_null

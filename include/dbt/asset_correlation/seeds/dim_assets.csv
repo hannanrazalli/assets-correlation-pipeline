@@ -1,3 +1,5 @@
 ticker,asset_name,asset_class,base_currency
 ^GSPC,S&P 500,Stock,USD
 ^KLSE,FTSE Bursa Malaysia KLCI,Stock,MYR
+BTC_USD, Bitcoin USD, Crypto, USD
+GLD, SPDR Gold Shares, ETF, USD

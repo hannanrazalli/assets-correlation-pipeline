@@ -34,15 +34,27 @@ models:
 
   - name: fct_asset_correlation
     columns:
-      - name: correlation_30d
+      - name: corr_sp500_klse_30d
         tests:
           - not_null
 
-      - name: correlation_90d
+      - name: corr_sp500_btc_30d
         tests:
           - not_null
 
-      - name: correlation_365d
+      - name: corr_sp500_gold_30d
+        tests:
+          - not_null
+
+      - name: corr_klse_btc_30d
+        tests:
+          - not_null
+
+      - name: corr_klse_gold_30d
+        tests:
+          - not_null
+
+      - name: corr_btc_gold_30d
         tests:
           - not_null
 
