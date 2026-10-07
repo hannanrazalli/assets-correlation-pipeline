@@ -11,8 +11,14 @@ from include.utilities.cosmos_config import (
     project_config,
     render_config,
 )
+from include.utilities.slack_alerts import slack_failure_alert
 
-default_args = {"owner": "Hannan", "retries": 1, "retry_delay": timedelta(minutes=1)}
+default_args = {
+    "owner": "Hannan",
+    "retries": 1,
+    "retry_delay": timedelta(minutes=1),
+    "on_failure_callback": slack_failure_alert,
+}
 
 
 @dag(
