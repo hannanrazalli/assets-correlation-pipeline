@@ -53,7 +53,7 @@ flowchart TD
 
     subgraph Discovery["2. Catalog & Discovery"]
         S3_Raw --> B1[AWS Glue Crawlers]
-        B1 --> B2[AWS Data Catalog\nawsdatacatalog]
+        B1 --> B2[AWS Data Catalog]
     end
 
     subgraph Transformation["3. Transformation Layer (dbt Core + Athena)"]
@@ -194,7 +194,7 @@ git clone https://github.com/hannanrazalli/assets-correlation-pipeline.git
 cd assets-correlation-pipeline
 cp .env.example .env
 ```
-*(Ensure `.env` contains your `BUCKET_NAME`, AWS credentials, and `DBT_TARGET_SCHEMA`)*
+*(Ensure `.env` contains your `BUCKET_NAME', `DBT_TARGET_SCHEMA`, 'S3_ATHENA_STAGING_DIR', 'S3_ATHENA_DATA_DIR' and 'FOREX_URL=https://api.frankfurter.dev/v2/rates')*
 
 ### 2. Start Airflow Environment
 ```bash
