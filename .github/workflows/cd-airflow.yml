@@ -33,6 +33,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # [NEW Step 1] Dapatkan IP awam GitHub Actions Runner
+      - name: Get GitHub Runner IP
+        id: ip
+        run: echo "RUNNER_IP=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_ENV
+
+      # [NEW Step 2] Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # [NEW Step 3] Buka Port 22 khas untuk IP Runner ini sahaja
+      - name: Whitelist Runner IP in Security Group
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp --port 22 --cidr ${{ env.RUNNER_IP }}/32
+
       - name: Pull latest code on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -78,3 +98,10 @@ jobs:
             done
             echo "Airflow failed health check after 120 seconds."
             exit 1
+
+      - name: Revoke Runner IP from Security Group
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp --port 22 --cidr ${{ env.RUNNER_IP }}/32
