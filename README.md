@@ -1,8 +1,8 @@
 # Multi-Asset Correlation Pipeline
 
-This project loads daily data for the S&P 500, KLCI, Bitcoin and GLD into S3. Airflow runs ingestion and Glue crawlers, while dbt transforms the data in Athena to calculate returns from MYR-denominated price series and rolling correlations over 30 matched observations.
+This project collects daily prices for the S&P 500, KLCI, Bitcoin and GLD, then stores them in S3. Airflow runs the data loaders and Glue crawlers. dbt transforms the data in Athena. It converts prices to MYR, calculates daily returns and compares each pair of assets using rolling correlations over 30 shared observations.
 
-The output is a reporting dataset for exploring cross-asset movement. It does not calculate portfolio risk or issue correlation-threshold alerts. Missing exchange rates currently fall back to `1.0`; affected USD values are therefore not valid MYR conversions. See [limitations](#limitations) before interpreting the results.
+The output helps you explore how these assets move in relation to each other. It does not measure portfolio risk or send alerts when correlations cross a threshold. If an exchange rate is missing, the pipeline uses `1.0`. The affected USD prices are then not valid MYR conversions. Read [Limitations](#limitations) before using the results.
 
 ![dbt](https://img.shields.io/badge/Transformation-dbt_Core-orange)
 ![Airflow](https://img.shields.io/badge/Orchestration-Apache_Airflow-blue)
@@ -20,7 +20,7 @@ The output is a reporting dataset for exploring cross-asset movement. It does no
 | SPDR Gold Shares (`GLD`) | Yahoo Finance through `yfinance` | Gold ETF proxy | Parquet |
 | USD/MYR | Frankfurter `/v2/rates` | Currency conversion | NDJSON |
 
-The indices are not portfolio holdings, and GLD is an ETF rather than a spot-gold series. Equity and ETF observations depend on trading calendars; Bitcoin trades throughout the week.
+The indices are market proxies, not portfolio holdings. GLD is a gold ETF, not a spot-gold price. Stock and ETF data follow market trading days. Bitcoin trades every day.
 
 ## Architecture
 
@@ -46,7 +46,7 @@ flowchart TD
     AF --> SL[Slack task-failure callback]
 ```
 
-Python handles API requests and S3 writes. Glue catalogs the raw files. Athena executes dbt SQL; only `fct_assets` is an incremental Iceberg table. Airflow and its supporting services run separately from the serverless query/storage services.
+Python requests data from the APIs and writes it to S3. Glue records the raw files in the data catalog. Athena runs the dbt SQL. Of the dbt models, only `fct_assets` is an incremental Iceberg table. Airflow runs separately from these AWS query and storage services.
 
 ## Repository layout
 
@@ -65,30 +65,30 @@ include/dbt/asset_correlation/
 
 ## Pipeline behaviour
 
-The DAG `00_Daily_Asset_Pipeline` uses `@daily`, `catchup=False` and `max_active_runs=1`. Each ingestion task receives Airflow's `ds` date. The Yahoo loaders request that day's interval and return without writing if the result is empty. Empty data is treated as a skip; the code does not distinguish a market closure from a provider problem. The forex loader checks HTTP status but has no equivalent empty-result safeguard.
+The `00_Daily_Asset_Pipeline` DAG runs once a day. It does not catch up on missed runs, and it allows only one active run at a time. Airflow passes the run date (`ds`) to each loader. The Yahoo Finance loaders request data for that date and skip the write if no data is returned. The pipeline does not tell whether an empty result means a market closure or a provider issue. The forex loader checks the HTTP response, but does not have the same check for an empty result.
 
-Files use date-specific paths under `raw/<asset_class>/year=YYYY/month=MM/day=DD/`. Each ingestion task has a corresponding Glue crawler. The Cosmos task group starts after all four crawlers finish. Scheduling is daily rather than explicitly tied to each exchange's market-close time.
+Files use date-based paths such as `raw/stocks/year=2026/month=10/day=10/`. Each loader has a Glue crawler. The Cosmos task group starts after all four crawlers finish. The DAG runs daily. It is not scheduled around each exchange's market close.
 
 | dbt object | Materialization | Behaviour |
 | --- | --- | --- |
-| `stg_assets`, `stg_forex` | Views | Cast raw fields; combine four asset series into long format |
+| `stg_assets`, `stg_forex` | Views | Cast raw fields and combine the four asset series into one table |
 | `int_assets`, `int_forex` | Views | Generate surrogate keys and select one row per natural key |
 | `dim_assets` | Seed | Ticker, asset name, asset class and base currency |
 | `dim_dates` | Table | Calendar dates from 2020 through 2030 |
-| `fct_assets` | Incremental Iceberg table | Join prices, FX and asset metadata; merge by `asset_key` |
+| `fct_assets` | Incremental Iceberg table | Join prices, FX and asset metadata. Merge rows by `asset_key` |
 | `fct_daily_returns` | View | Percentage change from each asset's previous available observation |
 | `fct_asset_correlation` | View | Six pair correlations over 30 complete-case observations |
 | `fct_assets_rpt` | View | Calendar, price, return and correlation columns |
 
-The correlation model first keeps dates where all four returns are non-null. It then uses `ROWS BETWEEN 29 PRECEDING AND CURRENT ROW` and retains rows with `day_number >= 30`. The first output therefore needs 30 matched return observations, which can span more than 30 calendar days. Existing `_30d` column names are retained for compatibility.
+The correlation model uses only dates that have returns for all four assets. For each result, it looks at the current row and the previous 29 matching rows. It produces a result after 30 shared observations. Those observations can cover more than 30 calendar days. The model keeps the existing `_30d` column names for compatibility.
 
 ### Reprocessing and execution metadata
 
-The incremental fact reads raw observations dated within three calendar days of the maximum date already in the fact. This can merge revised raw values inside that window, but ingestion does not automatically refetch previous days. Provider revisions must first be re-ingested. Older backfills require a separate rebuild or loading procedure; replaying ingestion alone does not bypass the fact's date filter.
+The incremental fact model reads raw observations from the three calendar days ending at its latest date. This lets it merge updated values in that window. However, the loaders do not automatically fetch previous days again. Re-ingest data before expecting the model to pick up provider revisions. Older backfills need a separate rebuild or loading procedure. Re-running the loader alone does not bypass the fact model's date filter.
 
-Intermediate models order duplicates by `_staged_at`. Because staging is a view and that field uses `current_timestamp`, it is not a persisted source-arrival timestamp and cannot establish which conflicting duplicate was ingested last.
+Intermediate models sort duplicate rows by `_staged_at`. Staging is a view, and `_staged_at` uses `current_timestamp`. It is calculated when the view runs, so it does not record when data arrived. It cannot reliably identify the newest copy of a conflicting row.
 
-The audit macro is used in staging, intermediate and `fct_assets` models. View timestamps are evaluated at query time; invocation IDs identify the dbt execution that rendered the SQL. These fields provide execution context, not a complete ingestion or revision history.
+The audit macro adds metadata to staging, intermediate and `fct_assets` models. A view's timestamp is calculated when queried. Invocation IDs show which dbt run produced the SQL. This metadata describes dbt execution. It is not a full history of data loads or revisions.
 
 ## Validation and deployment
 
@@ -102,21 +102,21 @@ There are 32 configured generic dbt tests:
 | Marts | 13 | Fact keys, relationships, converted prices and correlation outputs |
 | Seed | 2 | Unique, non-null ticker |
 
-Configured tests are not a passing test-run record. They also do not establish freshness, dataset completeness, FX correctness or statistical validity. An empty correlation view can pass column-level non-null tests because there are no failing rows.
+This table lists configured tests. It does not show that the tests have passed. The tests also do not confirm that data is current or complete, that currency conversion is correct, or that results are statistically valid. An empty correlation view can pass non-null checks because it has no rows to fail them.
 
-GitHub Actions runs Ruff, checks DAG import errors with `DagBag`, and runs `dbt deps` plus `dbt parse` using a dummy Athena profile. It does not execute transformations or tests against Athena, and parsing is not warehouse SQL validation.
+GitHub Actions runs Ruff, checks DAG imports with Airflow's `DagBag`, and runs `dbt deps` and `dbt parse` with a dummy Athena profile. CI does not run transformations or tests in Athena. A successful parse does not confirm that the SQL works in the warehouse.
 
-The CD workflow runs on pushes to `main` or manual dispatch. It temporarily permits the runner IP on EC2 SSH, syncs the remote checkout to `origin/main`, conditionally restarts Astro when image inputs change, checks Airflow health, and attempts ingress cleanup. This workflow requires GitHub secrets and an existing EC2 setup. Its presence does not prove a deployment succeeded, and it is not explicitly gated on completion of the CI workflow.
+The CD workflow runs when code is pushed to `main` or when started manually. It temporarily allows the GitHub runner to connect to EC2 over SSH. It updates the remote checkout to `origin/main`, restarts Astro when image inputs change, checks Airflow health and then tries to remove the temporary network rule. It requires GitHub secrets and an existing EC2 setup. The workflow file alone does not confirm that a deployment succeeded. CD is not explicitly set to wait for CI to finish.
 
 Required GitHub secrets are `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_SG_ID`, `EC2_HOST`, `EC2_USER` and `EC2_SSH_KEY`. The remote checkout is reset to `origin/main`, so deployment is intended for a dedicated checkout without local edits.
 
-Slack notifications use the `slack_alert_conn` connection and contain task details and an Airflow log URL. Delivery is best effort: the callback currently has no request timeout or HTTP-response validation.
+Slack notifications use the `slack_alert_conn` connection. They include task details and an Airflow log link. Delivery is best effort. The callback does not set a request timeout or check the HTTP response.
 
 ## How to run
 
 ### Prerequisites and AWS resources
 
-You need Docker Desktop, Astro CLI, AWS access and existing resources in `ap-southeast-1`. The Dockerfile selects Astro Runtime `3.3-8`; Python dependency files use version ranges rather than a fully locked environment. For manual dbt execution, install the project's dependencies in a compatible Python environment. CI currently requests Python 3.10.
+You need Docker Desktop, Astro CLI and AWS access. The AWS resources must already exist in `ap-southeast-1`. The Dockerfile uses Astro Runtime `3.3-8`. Python dependencies use version ranges, so installs may not use the exact same package versions each time. To run dbt manually, install the project dependencies in a compatible Python environment. CI uses Python 3.10.
 
 Create the S3 bucket/prefixes, Glue database, Athena workgroup/results location and these Glue crawlers before triggering the DAG:
 
@@ -127,9 +127,9 @@ Create the S3 bucket/prefixes, Glue database, Athena workgroup/results location 
 | `bitcoin_crawler_asset_correlation` | `raw/bitcoin/` | `raw_bitcoin` |
 | `gold_crawler_asset_correlation` | `raw/gold/` | `raw_gold` |
 
-The dbt source declarations currently use the Glue schema `asset_correlation`. Keep that raw database name unless you also update `_sources.yml`. `DBT_TARGET_SCHEMA` controls model output placement, not the source database. Verify crawler table names and columns against the staging SQL; the repository does not provision AWS resources or configure crawler naming rules. Manual dbt uses Athena workgroup `primary`.
+dbt expects the raw Glue database to be named `asset_correlation`. If you use another name, update `_sources.yml` too. `DBT_TARGET_SCHEMA` sets where dbt writes its models. It does not change the raw database name. Check that crawler table names and columns match the staging SQL. This repository does not create AWS resources or set crawler naming rules. Manual dbt runs use the Athena workgroup `primary`.
 
-AWS permissions must cover the configured S3 paths, Glue catalog/crawler operations and Athena queries, with Lake Formation or KMS access where your environment requires it.
+The AWS user or role needs access to the configured S3 paths, Glue catalog and crawlers, and Athena queries. Your account may also require Lake Formation or KMS permissions.
 
 ### Configure and start Airflow
 
@@ -139,7 +139,7 @@ cd assets-correlation-pipeline
 cp .env.example .env
 ```
 
-On PowerShell, use `Copy-Item .env.example .env` for the last step. Replace the example values with your bucket, schema and Athena paths. Keep credentials out of tracked files.
+On PowerShell, run `Copy-Item .env.example .env` instead of the last command. Replace the example values with your bucket, schema and Athena paths. Do not put credentials in files tracked by Git.
 
 ```bash
 astro dev start
@@ -147,16 +147,16 @@ astro dev start
 
 Open `http://localhost:8080` and configure:
 
-- `aws_default`: an Amazon Web Services connection with access to your resources. Ingestion and Cosmos use this connection. Ensure credentials are available inside the Airflow runtime, not only on the host.
-- `slack_alert_conn`: the callback concatenates the connection's host and password to form the webhook URL. Put the URL prefix in host and the secret suffix in password; do not commit the webhook.
+- `aws_default`: an AWS connection with access to your resources. The ingestion tasks and Cosmos use it. Make sure Airflow can access the credentials from inside its runtime.
+- `slack_alert_conn`: the callback joins the connection's host and password to build the webhook URL. Put the URL prefix in `host` and the secret suffix in `password`. Do not commit the webhook URL.
 
-`airflow_settings.yaml` is a starter template, not a working connection setup. Confirm DAG import and connection configuration before triggering `00_Daily_Asset_Pipeline`.
+`airflow_settings.yaml` is a template. It does not configure working connections by itself. Check that the DAG imports and the connections work before you trigger `00_Daily_Asset_Pipeline`.
 
-The DAG does not automatically load historical data because catchup is disabled. A fresh daily setup will not immediately produce a correlation result. Establish sufficient raw history and populate `dim_assets` before expecting the reporting models to contain correlations.
+The DAG does not load historical data automatically. A new setup will not produce correlations right away. Load enough historical data and populate `dim_assets` first.
 
 ### Run dbt manually
 
-Manual dbt uses `profiles.yml` and the AWS `default` profile, separately from Airflow's `aws_default` connection. Set the following environment variables in the shell that runs dbt. dbt does not automatically load the root `.env` file.
+Manual dbt uses `profiles.yml` and the AWS `default` profile. This is separate from Airflow's `aws_default` connection. Set these environment variables in the shell where you run dbt. dbt does not load the root `.env` file automatically.
 
 ```powershell
 $env:DBT_TARGET_SCHEMA = "asset_correlation"
@@ -174,22 +174,22 @@ dbt run --profiles-dir .
 dbt test --profiles-dir .
 ```
 
-These commands write to the configured AWS target. For an isolated validation, use a separate target schema and data prefix. A full refresh can rebuild the fact from raw history, but should be planned against downstream consumers rather than used as a routine retry.
+These commands write to AWS. To validate without affecting your normal data, use a separate target schema and data prefix. A full refresh rebuilds the fact table from raw history. Plan one before running it because other users or models may depend on that table.
 
 ## Inspecting results
 
-After a successful warehouse run, inspect `fct_assets_rpt` for prices, returns and the six correlation columns. This repository does not include a reproducible results snapshot that supports a particular average correlation or diversification outcome.
+After a successful warehouse run, check `fct_assets_rpt` for prices, returns and the six correlation columns. This repository does not include a results snapshot to support claims about average correlation or diversification.
 
-When publishing results, include the query, observation date range, matched sample count, missing-data treatment and run evidence. Correlation alone does not establish portfolio protection or causality.
+When you share results, include the query, date range, number of matched observations, how missing data was handled and evidence of the run. Correlation alone does not prove that a portfolio is protected or that one asset causes another to move.
 
 ## Limitations
 
 - **Missing FX:** USD-denominated series use `1.0` when the date has no FX match. The existing non-null price test cannot detect this incorrect conversion. A consistent missing-FX policy and treatment of affected historical rows are still needed.
 - **Return alignment:** `LAG()` uses each asset's previous available price. A Monday equity return can cover Friday to Monday while Bitcoin covers Sunday to Monday. Matching date labels does not align those intervals or exchange closing times.
 - **Complete-case selection:** All six correlations use dates where all four returns exist. Missing one series removes that date even for pairs that do not include it.
-- **Precision and sample size:** Returns and correlations are rounded to two decimals. Thirty observations and warm-up filtering do not guarantee a stable estimate; constant returns can also produce null correlations.
-- **Revisions and audit ordering:** The merge window needs updated raw data; view timestamps do not identify the latest source revision. Historical replay and conflicting-duplicate handling need explicit procedures.
+- **Precision and sample size:** Returns and correlations are rounded to two decimal places. Thirty observations do not guarantee a stable estimate. Constant returns can produce a null correlation.
+- **Revisions and audit ordering:** The merge window can only use updated raw data that has been loaded. View timestamps do not show which source revision is newest. Historical reloads and duplicate conflicts need a separate process.
 - **Expansion:** New tickers require updates to ingestion, seeds, staging unions, tests, return pivots, correlation expressions and reporting columns.
-- **Operations:** Live warehouse integration tests, FX-quality checks, a BI dashboard and threshold-based correlation alerts are not implemented. AWS cost has not been measured here; Athena, Glue, S3 and EC2 each contribute to total cost.
+- **Operations:** The project does not include live warehouse integration tests, FX quality checks, a BI dashboard or correlation alerts. AWS cost has not been measured. Athena, Glue, S3 and EC2 all contribute to it.
 
-Athena fits this batch workflow without a dedicated warehouse cluster, but cost and performance should be assessed from actual queries and infrastructure usage.
+Athena runs this batch workflow without a dedicated warehouse cluster. Measure cost and performance using real queries and infrastructure usage.
