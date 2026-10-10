@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
@@ -35,7 +35,7 @@ def to_ndjson(records):
 
 def forex(ds: str | None = None):
     if not ds:
-        ds = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        ds = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
     url = os.getenv("FOREX_URL", "https://api.frankfurter.dev/v2/rates")
     params = {"base": "USD", "quotes": "MYR", "date": ds}
@@ -46,7 +46,7 @@ def forex(ds: str | None = None):
 
     ndjson_data = to_ndjson(data)
 
-    dt = datetime.strptime(ds, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    dt = datetime.strptime(ds, "%Y-%m-%d").replace(tzinfo=UTC)
     year, month, day = dt.strftime("%Y"), dt.strftime("%m"), dt.strftime("%d")
 
     s3_hook = S3Hook(aws_conn_id="aws_default")

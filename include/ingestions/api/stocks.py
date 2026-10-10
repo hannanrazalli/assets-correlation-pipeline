@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import awswrangler as wr
 import yfinance as yf
@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 def stocks(ds: str | None = None):
     if not ds:
-        ds = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        ds = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
-    dt = datetime.strptime(ds, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    dt = datetime.strptime(ds, "%Y-%m-%d").replace(tzinfo=UTC)
     year, month, day = dt.strftime("%Y"), dt.strftime("%m"), dt.strftime("%d")
 
     start = dt.strftime("%Y-%m-%d")

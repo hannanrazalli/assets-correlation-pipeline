@@ -61,7 +61,6 @@ include/dbt/asset_correlation/
   macros/audit_columns.sql          dbt execution metadata
   seeds/dim_assets.csv              Asset lookup
 .github/workflows/                  CI checks and EC2 deployment workflow
-docs/subagent-reference.md           Agent selection guide by component and stack
 ```
 
 ## Pipeline behaviour
@@ -194,5 +193,3 @@ When publishing results, include the query, observation date range, matched samp
 - **Operations:** Live warehouse integration tests, FX-quality checks, a BI dashboard and threshold-based correlation alerts are not implemented. AWS cost has not been measured here; Athena, Glue, S3 and EC2 each contribute to total cost.
 
 Athena fits this batch workflow without a dedicated warehouse cluster, but cost and performance should be assessed from actual queries and infrastructure usage.
-
-For agent selection on this stack or future projects, see the [subagent reference](docs/subagent-reference.md).
