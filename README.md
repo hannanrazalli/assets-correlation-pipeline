@@ -61,7 +61,6 @@ include/dbt/asset_correlation/
   macros/audit_columns.sql          dbt execution metadata
   seeds/dim_assets.csv              Asset lookup
 .github/workflows/                  CI checks and EC2 deployment workflow
-docs/subagent-reference.md           Agent selection guide by component and stack
 ```
 
 ## Pipeline behaviour
