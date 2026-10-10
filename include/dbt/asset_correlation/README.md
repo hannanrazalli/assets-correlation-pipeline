@@ -1,15 +1,16 @@
-Welcome to your new dbt project!
+# Asset correlation dbt project
 
-### Using the starter project
+This project transforms the pipeline's Glue source tables in Athena. Setup, model materializations, test coverage and known data limitations are documented in the [root README](../../../README.md).
 
-Try running the following commands:
-- dbt run
-- dbt test
+Manual runs use `profiles.yml`, the AWS `default` profile and exported `S3_ATHENA_STAGING_DIR` and `S3_ATHENA_DATA_DIR` values. `DBT_TARGET_SCHEMA` defaults to `asset_correlation`. The root `.env` file is not automatically loaded by dbt.
 
+From this directory, after configuring AWS access and loading raw data:
 
-### Resources:
-- Learn more about dbt [in the docs](https://docs.getdbt.com/docs/introduction)
-- Check out [Discourse](https://discourse.getdbt.com/) for commonly asked questions and answers
-- Join the [chat](https://community.getdbt.com/) on Slack for live discussions and support
-- Find [dbt events](https://events.getdbt.com) near you
-- Check out [the blog](https://blog.getdbt.com/) for the latest news on dbt's development and best practices
+```bash
+dbt deps --profiles-dir .
+dbt seed --profiles-dir .
+dbt run --profiles-dir .
+dbt test --profiles-dir .
+```
+
+The project defines 32 generic tests. Execution results must be checked separately; the configured count is not a passing-run claim.

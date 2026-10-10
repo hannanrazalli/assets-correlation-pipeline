@@ -14,5 +14,5 @@ yfinance
 apache-airflow-providers-amazon
 apache-airflow-providers-postgres
 
-# Utilities
+# Utility
 python-dotenv
