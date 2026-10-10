@@ -1,211 +1,198 @@
-# Multi-Asset Correlation & Diversification Risk Pipeline
+# Multi-Asset Correlation Pipeline
 
-Automated batch data pipeline that ingests daily market prices across Malaysian equities, US equities, crypto, and gold, converts cross-border valuations into MYR, and computes 30-day rolling correlation matrices to detect when "diversified" portfolios move in lockstep.
+This project loads daily data for the S&P 500, KLCI, Bitcoin and GLD into S3. Airflow runs ingestion and Glue crawlers, while dbt transforms the data in Athena to calculate returns from MYR-denominated price series and rolling correlations over 30 matched observations.
 
-![dbt](https://img.shields.io/badge/dbt_Core-1.8-orange?style=flat&logo=dbt)
-![Airflow](https://img.shields.io/badge/Apache_Airflow-2.8-blue?style=flat&logo=apacheairflow)
-![AWS Athena](https://img.shields.io/badge/AWS_Athena-Serverless-FF9900?style=flat&logo=amazonaws)
-![Apache Iceberg](https://img.shields.io/badge/Storage-Apache_Iceberg-blue?style=flat)
-![Tests](https://img.shields.io/badge/dbt_Tests-32_Passed-brightgreen?style=flat)
+The output is a reporting dataset for exploring cross-asset movement. It does not calculate portfolio risk or issue correlation-threshold alerts. Missing exchange rates currently fall back to `1.0`; affected USD values are therefore not valid MYR conversions. See [limitations](#limitations) before interpreting the results.
 
----
+![dbt](https://img.shields.io/badge/Transformation-dbt_Core-orange)
+![Airflow](https://img.shields.io/badge/Orchestration-Apache_Airflow-blue)
+![Athena](https://img.shields.io/badge/Query-AWS_Athena-FF9900)
+![Iceberg](https://img.shields.io/badge/Fact_table-Apache_Iceberg-blue)
+![Configured tests](https://img.shields.io/badge/dbt_tests-32_configured-lightgrey)
 
-## Table of Contents
-- [Problem Statement](#problem-statement)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Data Sources](#data-sources)
-- [Pipeline Design](#pipeline-design)
-  - [Ingestion Layer](#ingestion-layer)
-  - [Transformation Layer (dbt Core)](#transformation-layer-dbt-core)
-  - [Orchestration (Airflow & Astronomer Cosmos)](#orchestration-airflow--astronomer-cosmos)
-- [Data Quality & Testing](#data-quality--testing)
-- [Results & Key Insights](#results--key-insights)
-- [Challenges & Design Decisions](#challenges--design-decisions)
-- [Limitations & Future Work](#limitations--future-work)
-- [How to Run](#how-to-run)
+## Data sources
 
----
+| Series | Source | Role | Raw format |
+| --- | --- | --- | --- |
+| S&P 500 (`^GSPC`) | Yahoo Finance through `yfinance` | US equity index proxy | Parquet |
+| KLCI (`^KLSE`) | Yahoo Finance through `yfinance` | Malaysian equity index proxy | Parquet |
+| Bitcoin (`BTC-USD`) | Yahoo Finance through `yfinance` | Crypto price series | Parquet |
+| SPDR Gold Shares (`GLD`) | Yahoo Finance through `yfinance` | Gold ETF proxy | Parquet |
+| USD/MYR | Frankfurter `/v2/rates` | Currency conversion | NDJSON |
 
-## Problem Statement
-
-Retail and institutional investors often split holdings across geographically distinct asset classes (e.g., local equities, foreign indices, precious metals, and digital assets) assuming this protects against market downside. However, during periods of macro stress or liquidity crunches, historically uncorrelated assets frequently spike in correlation, invalidating diversification exactly when risk mitigation matters most.
-
-This pipeline automates daily price tracking for:
-* **Malaysian Equities:** FTSE Bursa Malaysia KLCI (`^KLSE`)
-* **US Equities:** S&P 500 (`^GSPC`)
-* **Digital Assets:** Bitcoin USD (`BTC-USD`)
-* **Precious Metals:** SPDR Gold Shares (`GLD`)
-* **Forex Conversion:** USD/MYR exchange rate via Frankfurter API
-
-**Business Value:** Serves as an automated early-warning signal for portfolio managers to monitor cross-asset correlation shifts, dynamically measure currency-adjusted risk in local currency (MYR), and identify systemic market co-movements without manual data collection.
-
----
+The indices are not portfolio holdings, and GLD is an ETF rather than a spot-gold series. Equity and ETF observations depend on trading calendars; Bitcoin trades throughout the week.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion["1. Ingestion Layer (Python & Airflow)"]
-        A1[yfinance API\nStocks, Gold, Bitcoin] -->|Parquet| S3_Raw[(AWS S3 Raw Lake\nPartitioned by Date)]
-        A2[Frankfurter REST API\nUSD/MYR Rates] -->|NDJSON| S3_Raw
-    end
-
-    subgraph Discovery["2. Catalog & Discovery"]
-        S3_Raw --> B1[AWS Glue Crawlers]
-        B1 --> B2[AWS Data Catalog]
-    end
-
-    subgraph Transformation["3. Transformation Layer (dbt Core + Athena)"]
-        B2 --> C1[Staging Layer\nstg_assets / stg_forex Views]
-        C1 --> C2[Intermediate Layer\nint_assets / int_forex Deduplication & Keys]
-        C2 --> C3[fct_assets\nApache Iceberg Incremental Merge]
-        C3 --> C4[fct_daily_returns\nLAG Window Returns Calculation]
-        C4 --> C5[fct_asset_correlation\n30-Day Rolling CORR Matrix]
-        C5 --> C6[fct_assets_rpt\nDenormalized Reporting Mart]
-    end
-
-    subgraph Orchestration["4. Orchestration & Monitoring"]
-        D1[Apache Airflow] -->|Scheduled Daily DAG| Ingestion
-        D1 -->|Astronomer Cosmos| Transformation
-        D1 -->|On Failure Callback| Slack[Slack Webhook Alerts]
-    end
+    Y[Yahoo Finance] --> P[Python ingestion]
+    F[Frankfurter] --> P
+    P --> S[S3 raw files]
+    S --> G[Glue crawlers and Data Catalog]
+    G --> ST[dbt staging views]
+    ST --> I[dbt intermediate views]
+    I --> A[fct_assets: Iceberg incremental merge]
+    SE[dim_assets seed] --> A
+    A --> R[fct_daily_returns view]
+    R --> C[fct_asset_correlation view: 30 matched observations]
+    R --> RP[fct_assets_rpt view]
+    C --> RP
+    D[dim_dates table] --> RP
+    AF[Airflow] --> P
+    AF --> G
+    AF --> CO[Cosmos dbt task group]
+    CO --> ST
+    AF --> SL[Slack task-failure callback]
 ```
 
----
+Python handles API requests and S3 writes. Glue catalogs the raw files. Athena executes dbt SQL; only `fct_assets` is an incremental Iceberg table. Airflow and its supporting services run separately from the serverless query/storage services.
 
-## Tech Stack
+## Repository layout
 
-| Layer | Tool / Tech | Why It Was Chosen |
-| :--- | :--- | :--- |
-| **Ingestion** | Python (`yfinance`, `requests`, `awswrangler`) | Lightweight, handles market closure gaps gracefully, writes partitioned Parquet/NDJSON directly to S3. |
-| **Storage & Lakehouse** | AWS S3 & Apache Iceberg | Hive-partitioned raw storage (`year/month/day`) combined with Apache Iceberg for ACID transactions and efficient upserts. |
-| **Catalog & Query Engine** | AWS Glue & AWS Athena | Fully serverless pay-per-query model; eliminates idle database cluster costs for daily batch runs. |
-| **Transformation** | dbt Core (`dbt-athena-community`) | Modular Medallion architecture, automated lineage parsing, and version-controlled SQL transformations. |
-| **Orchestration** | Apache Airflow (Astronomer Cosmos) | Industry-standard DAG scheduling with Cosmos rendering dbt models directly into native Airflow tasks. |
-| **Monitoring & Alerting** | Slack API Webhooks | Sends real-time Slack notifications with direct Airflow log links whenever a task fails. |
-
----
-
-## Data Sources
-
-| Source | Target Asset / Exchange | Frequency | Method | Storage Format |
-| :--- | :--- | :--- | :--- | :--- |
-| **Yahoo Finance** | S&P 500 (`^GSPC`), KLCI (`^KLSE`) | Daily (Trading days) | Python API Wrapper (`yfinance`) | Parquet (`snappy`) |
-| **Yahoo Finance** | Bitcoin USD (`BTC-USD`) | Daily (24/7) | Python API Wrapper (`yfinance`) | Parquet (`snappy`) |
-| **Yahoo Finance** | SPDR Gold Shares (`GLD`) | Daily (Trading days) | Python API Wrapper (`yfinance`) | Parquet (`snappy`) |
-| **Frankfurter API** | USD/MYR Foreign Exchange Rate | Daily (Business days) | REST API Endpoint (`/v2/rates`) | NDJSON |
-
----
-
-## Pipeline Design
-
-### Ingestion Layer
-* **Daily Ingestion Tasks:** Airflow tasks (`daily_forex`, `daily_stocks`, `daily_bitcoin`, `daily_gold`) run daily post-market close.
-* **Partitioned S3 Storage:** Raw data lands in S3 bucket prefixes organized by date: `raw/<asset_class>/year=YYYY/month=MM/day=DD/`.
-* **Market Closure Safeguard:** Ingestion functions evaluate `if df.empty:` (e.g., weekends or exchange holidays) and log a skip action rather than crashing or uploading corrupt empty files.
-
-### Transformation Layer (dbt Core)
-Following a 3-tier Medallion Architecture:
-
-```
-Raw S3 Catalog ──► Staging (Views) ──► Intermediate (Deduplication) ──► Marts (Iceberg Facts & Views)
+```text
+dags/daily_dag.py                    Daily ingestion, crawlers and dbt task group
+include/ingestions/api/              Stocks, Bitcoin, gold and forex loaders
+include/utilities/                   Cosmos configuration and Slack callback
+include/dbt/asset_correlation/
+  models/staging/                   Source casts and asset-series union
+  models/intermediate/              Natural-key deduplication and surrogate keys
+  models/marts/                     Prices, returns, correlations and reporting
+  macros/audit_columns.sql          dbt execution metadata
+  seeds/dim_assets.csv              Asset lookup
+.github/workflows/                  CI checks and EC2 deployment workflow
+docs/subagent-reference.md           Agent selection guide by component and stack
 ```
 
-1. **Staging (`stg_assets`, `stg_forex`):** Casts data types, standardizes currency names, unpivots wide stock tables into long format, and injects staging audit metadata.
-2. **Intermediate (`int_assets`, `int_forex`):** Generates surrogate keys using `dbt_utils.generate_surrogate_key` and applies windowed deduplication (`ROW_NUMBER() OVER (PARTITION BY ... ORDER BY _staged_at DESC)`) keeping only the latest batch.
-3. **Marts (`fct_assets`, `fct_daily_returns`, `fct_asset_correlation`, `fct_assets_rpt`):**
-   * `fct_assets`: Incremental **Apache Iceberg** fact table combining price histories, joining exchange rates, and calculating converted close prices in MYR (`close_price_myr`).
-   * `fct_daily_returns`: Calculates daily percentage returns per asset using SQL `LAG()` window functions.
-   * `fct_asset_correlation`: Calculates 30-day rolling correlation across 6 asset pairs (`S&P 500`, `KLCI`, `BTC`, `Gold`) using Athena windowed correlation functions (`CORR() OVER (...)`).
-   * `fct_assets_rpt`: Denormalized reporting mart joining date dimensions (`dim_dates`), prices, returns, and rolling correlations into a single queryable reporting structure.
+## Pipeline behaviour
 
-### Orchestration (Airflow & Astronomer Cosmos)
-* **DAG Scheduling:** Scheduled daily (`@daily`) with `catchup=False` and `max_active_runs=1` to preserve execution sequence.
-* **Crawler Integration:** `GlueCrawlerRunOperator` triggers schema discovery immediately after ingestion tasks complete, keeping Athena table definitions up to date.
-* **Cosmos Execution:** `DbtTaskGroup` automatically compiles dbt models into an Airflow task graph, enabling granular task retries and step-by-step UI tracking.
-* **Slack Failure Alerts:** Integrated `on_failure_callback` sends error alerts containing task details and direct Airflow log URLs to Slack.
+The DAG `00_Daily_Asset_Pipeline` uses `@daily`, `catchup=False` and `max_active_runs=1`. Each ingestion task receives Airflow's `ds` date. The Yahoo loaders request that day's interval and return without writing if the result is empty. Empty data is treated as a skip; the code does not distinguish a market closure from a provider problem. The forex loader checks HTTP status but has no equivalent empty-result safeguard.
 
----
+Files use date-specific paths under `raw/<asset_class>/year=YYYY/month=MM/day=DD/`. Each ingestion task has a corresponding Glue crawler. The Cosmos task group starts after all four crawlers finish. Scheduling is daily rather than explicitly tied to each exchange's market-close time.
 
-## Data Quality & Testing
+| dbt object | Materialization | Behaviour |
+| --- | --- | --- |
+| `stg_assets`, `stg_forex` | Views | Cast raw fields; combine four asset series into long format |
+| `int_assets`, `int_forex` | Views | Generate surrogate keys and select one row per natural key |
+| `dim_assets` | Seed | Ticker, asset name, asset class and base currency |
+| `dim_dates` | Table | Calendar dates from 2020 through 2030 |
+| `fct_assets` | Incremental Iceberg table | Join prices, FX and asset metadata; merge by `asset_key` |
+| `fct_daily_returns` | View | Percentage change from each asset's previous available observation |
+| `fct_asset_correlation` | View | Six pair correlations over 30 complete-case observations |
+| `fct_assets_rpt` | View | Calendar, price, return and correlation columns |
 
-Data quality guardrails are enforced at every pipeline boundary:
+The correlation model first keeps dates where all four returns are non-null. It then uses `ROWS BETWEEN 29 PRECEDING AND CURRENT ROW` and retains rows with `day_number >= 30`. The first output therefore needs 30 matched return observations, which can span more than 30 calendar days. Existing `_30d` column names are retained for compatibility.
 
-### 1. Automated dbt Tests (32 Configured Assertion Tests)
-* **Source Level (`_sources.yml`):** `not_null` tests on raw ingestion dates across all 4 source tables.
-* **Staging Level (`_stg_schema.yml`):** `not_null` assertions on rates and prices; `accepted_values` tests enforcing USD, MYR, and expected ticker symbols (`^GSPC`, `^KLSE`, `BTC_USD`, `GLD`).
-* **Intermediate Level (`_int_schema.yml`):** `unique` and `not_null` constraints on generated surrogate keys (`asset_key`, `forex_key`).
-* **Marts Level (`_mrt_schema.yml`):** `not_null` assertions across calculated correlation matrices; `relationships` foreign key validation linking fact records to `dim_dates` and `dim_assets`.
-* **Seed Level (`_seed_schema.yml`):** `unique` and `not_null` assertions on primary key `ticker` in asset dimension table.
+### Reprocessing and execution metadata
 
-### 2. Lineage Audit & Macro Injections
-All transformation models call a custom Jinja macro (`audit_columns`) that stamps execution metadata (`_staged_at`, `_processed_at`, `_refined_at`) along with the dbt `invocation_id` batch key to maintain full auditability.
+The incremental fact reads raw observations dated within three calendar days of the maximum date already in the fact. This can merge revised raw values inside that window, but ingestion does not automatically refetch previous days. Provider revisions must first be re-ingested. Older backfills require a separate rebuild or loading procedure; replaying ingestion alone does not bypass the fact's date filter.
 
----
+Intermediate models order duplicates by `_staged_at`. Because staging is a view and that field uses `current_timestamp`, it is not a persisted source-arrival timestamp and cannot establish which conflicting duplicate was ingested last.
 
-## Results & Key Insights
+The audit macro is used in staging, intermediate and `fct_assets` models. View timestamps are evaluated at query time; invocation IDs identify the dbt execution that rendered the SQL. These fields provide execution context, not a complete ingestion or revision history.
 
-Based on multi-asset daily return calculations:
+## Validation and deployment
 
-* **Equities Realized Diversification:** The 30-day rolling correlation between Malaysian equities (KLCI) and US equities (S&P 500) averages **~0.25 to 0.35**, confirming that geographic equity diversification remains effective under normal market conditions.
-* **Crypto vs Traditional Safe Havens:** Bitcoin (`BTC_USD`) exhibits volatile rolling correlation shifts relative to Gold (`GLD`) and the S&P 500, ranging from negative decorrelation during consolidation phases to positive spikes during broader market rallies.
-* **Warm-up Sample Filtering:** Correlation estimates during the initial 30 days of dataset initiation are filtered out (`WHERE day_number >= 30`) to eliminate extreme statistical noise caused by insufficient sample sizes.
+There are 32 configured generic dbt tests:
 
----
+| Layer | Count | Checks |
+| --- | --- | --- |
+| Sources | 4 | Non-null source dates |
+| Staging | 9 | Required fields and expected currencies/tickers |
+| Intermediate | 4 | Unique, non-null surrogate keys |
+| Marts | 13 | Fact keys, relationships, converted prices and correlation outputs |
+| Seed | 2 | Unique, non-null ticker |
 
-## Challenges & Design Decisions
+Configured tests are not a passing test-run record. They also do not establish freshness, dataset completeness, FX correctness or statistical validity. An empty correlation view can pass column-level non-null tests because there are no failing rows.
 
-### 1. Why AWS Athena over Amazon Redshift?
-**Decision:** Selected AWS Athena serverless query engine over a provisioned Redshift cluster.  
-**Reasoning:** Since this is a low-frequency daily batch pipeline with lightweight data volumes, a provisioned cluster would sit idle 95%+ of the day while incurring continuous costs. Athena's pay-per-query model keeps operating costs near zero while providing ANSI SQL capability.
+GitHub Actions runs Ruff, checks DAG import errors with `DagBag`, and runs `dbt deps` plus `dbt parse` using a dummy Athena profile. It does not execute transformations or tests against Athena, and parsing is not warehouse SQL validation.
 
-### 2. Handling Non-Trading Day Gaps
-**Decision:** Rather than forward-filling missing prices on market holidays (which artificially dampens return volatility and distorts correlation), data ingestion skips non-trading dates. SQL calculations use windowed `LAG()` logic on active trading days to measure returns accurately without introducing zero-return artifacts.
+The CD workflow runs on pushes to `main` or manual dispatch. It temporarily permits the runner IP on EC2 SSH, syncs the remote checkout to `origin/main`, conditionally restarts Astro when image inputs change, checks Airflow health, and attempts ingress cleanup. This workflow requires GitHub secrets and an existing EC2 setup. Its presence does not prove a deployment succeeded, and it is not explicitly gated on completion of the CI workflow.
 
-### 3. Late-Arriving Data with Incremental Merges
-**Decision:** Implemented an Apache Iceberg table format for `fct_assets` using an incremental `merge` strategy with a 3-day lookback window (`price_date >= max(price_date) - interval '3' day`).  
-**Reasoning:** Financial data providers occasionally issue retroactively revised settlement figures or delayed forex quotes. The 3-day lookback window captures upstream updates during incremental runs without requiring costly full table rebuilds.
+Required GitHub secrets are `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_SG_ID`, `EC2_HOST`, `EC2_USER` and `EC2_SSH_KEY`. The remote checkout is reset to `origin/main`, so deployment is intended for a dedicated checkout without local edits.
 
-### 4. Idempotent Deduplication Strategy
-**Decision:** Chose a `ROW_NUMBER() OVER (PARTITION BY natural_keys ORDER BY _staged_at DESC)` strategy in intermediate models to retain the most recently staged record.  
-**Reasoning:** Guarantees that re-running DAGs or backfilling historical dates overwrites stale data with the latest execution payload rather than producing duplicate rows.
+Slack notifications use the `slack_alert_conn` connection and contain task details and an Airflow log URL. Delivery is best effort: the callback currently has no request timeout or HTTP-response validation.
 
----
+## How to run
 
-## Limitations & Future Work
+### Prerequisites and AWS resources
 
-* **Dashboard Integration:** Queries are verified via AWS Athena and dbt documentation; connecting a light BI layer (e.g., Apache Superset or AWS QuickSight) is planned for direct correlation matrix visualization.
-* **CI Warehouse Integration:** GitHub Actions currently lints Python code and validates DAG/dbt compilation; running live dbt build integration tests against an isolated staging schema in AWS Athena is planned for future iterations.
-* **Asset Class Expansion:** The current pipeline covers 4 core assets across equities, crypto, and gold; the staging schema design allows adding new tickers by appending ingestion scripts and seed entries without refactoring core SQL models.
+You need Docker Desktop, Astro CLI, AWS access and existing resources in `ap-southeast-1`. The Dockerfile selects Astro Runtime `3.3-8`; Python dependency files use version ranges rather than a fully locked environment. For manual dbt execution, install the project's dependencies in a compatible Python environment. CI currently requests Python 3.10.
 
----
+Create the S3 bucket/prefixes, Glue database, Athena workgroup/results location and these Glue crawlers before triggering the DAG:
 
-## How to Run
+| Crawler name | S3 prefix | Expected Glue table |
+| --- | --- | --- |
+| `forex_crawler_asset_correlation` | `raw/forex/` | `raw_forex` |
+| `stocks_crawler_asset_correlation` | `raw/stocks/` | `raw_stocks` |
+| `bitcoin_crawler_asset_correlation` | `raw/bitcoin/` | `raw_bitcoin` |
+| `gold_crawler_asset_correlation` | `raw/gold/` | `raw_gold` |
 
-### Prerequisites
-* AWS account configured with S3, Glue, and Athena permissions
-* Docker Desktop & Astro CLI installed
-* Python 3.10+
+The dbt source declarations currently use the Glue schema `asset_correlation`. Keep that raw database name unless you also update `_sources.yml`. `DBT_TARGET_SCHEMA` controls model output placement, not the source database. Verify crawler table names and columns against the staging SQL; the repository does not provision AWS resources or configure crawler naming rules. Manual dbt uses Athena workgroup `primary`.
 
-### 1. Clone Repository & Configure Environment
+AWS permissions must cover the configured S3 paths, Glue catalog/crawler operations and Athena queries, with Lake Formation or KMS access where your environment requires it.
+
+### Configure and start Airflow
+
 ```bash
 git clone https://github.com/hannanrazalli/assets-correlation-pipeline.git
 cd assets-correlation-pipeline
 cp .env.example .env
 ```
-*(Ensure `.env` contains your `BUCKET_NAME', `DBT_TARGET_SCHEMA`, 'S3_ATHENA_STAGING_DIR', 'S3_ATHENA_DATA_DIR' and 'FOREX_URL=https://api.frankfurter.dev/v2/rates')*
 
-### 2. Start Airflow Environment
+On PowerShell, use `Copy-Item .env.example .env` for the last step. Replace the example values with your bucket, schema and Athena paths. Keep credentials out of tracked files.
+
 ```bash
 astro dev start
 ```
-Access the Airflow UI at `http://localhost:8080` to trigger `00_Daily_Asset_Pipeline`.
 
-### 3. Run dbt Transformations & Quality Tests Manually
+Open `http://localhost:8080` and configure:
+
+- `aws_default`: an Amazon Web Services connection with access to your resources. Ingestion and Cosmos use this connection. Ensure credentials are available inside the Airflow runtime, not only on the host.
+- `slack_alert_conn`: the callback concatenates the connection's host and password to form the webhook URL. Put the URL prefix in host and the secret suffix in password; do not commit the webhook.
+
+`airflow_settings.yaml` is a starter template, not a working connection setup. Confirm DAG import and connection configuration before triggering `00_Daily_Asset_Pipeline`.
+
+The DAG does not automatically load historical data because catchup is disabled. A fresh daily setup will not immediately produce a correlation result. Establish sufficient raw history and populate `dim_assets` before expecting the reporting models to contain correlations.
+
+### Run dbt manually
+
+Manual dbt uses `profiles.yml` and the AWS `default` profile, separately from Airflow's `aws_default` connection. Set the following environment variables in the shell that runs dbt. dbt does not automatically load the root `.env` file.
+
+```powershell
+$env:DBT_TARGET_SCHEMA = "asset_correlation"
+$env:S3_ATHENA_STAGING_DIR = "s3://your-bucket/athena-results/"
+$env:S3_ATHENA_DATA_DIR = "s3://your-bucket/dbt-data/"
+```
+
+With raw Glue tables and AWS credentials available:
+
 ```bash
 cd include/dbt/asset_correlation
-dbt deps
+dbt deps --profiles-dir .
+dbt seed --profiles-dir .
 dbt run --profiles-dir .
 dbt test --profiles-dir .
 ```
+
+These commands write to the configured AWS target. For an isolated validation, use a separate target schema and data prefix. A full refresh can rebuild the fact from raw history, but should be planned against downstream consumers rather than used as a routine retry.
+
+## Inspecting results
+
+After a successful warehouse run, inspect `fct_assets_rpt` for prices, returns and the six correlation columns. This repository does not include a reproducible results snapshot that supports a particular average correlation or diversification outcome.
+
+When publishing results, include the query, observation date range, matched sample count, missing-data treatment and run evidence. Correlation alone does not establish portfolio protection or causality.
+
+## Limitations
+
+- **Missing FX:** USD-denominated series use `1.0` when the date has no FX match. The existing non-null price test cannot detect this incorrect conversion. A consistent missing-FX policy and treatment of affected historical rows are still needed.
+- **Return alignment:** `LAG()` uses each asset's previous available price. A Monday equity return can cover Friday to Monday while Bitcoin covers Sunday to Monday. Matching date labels does not align those intervals or exchange closing times.
+- **Complete-case selection:** All six correlations use dates where all four returns exist. Missing one series removes that date even for pairs that do not include it.
+- **Precision and sample size:** Returns and correlations are rounded to two decimals. Thirty observations and warm-up filtering do not guarantee a stable estimate; constant returns can also produce null correlations.
+- **Revisions and audit ordering:** The merge window needs updated raw data; view timestamps do not identify the latest source revision. Historical replay and conflicting-duplicate handling need explicit procedures.
+- **Expansion:** New tickers require updates to ingestion, seeds, staging unions, tests, return pivots, correlation expressions and reporting columns.
+- **Operations:** Live warehouse integration tests, FX-quality checks, a BI dashboard and threshold-based correlation alerts are not implemented. AWS cost has not been measured here; Athena, Glue, S3 and EC2 each contribute to total cost.
+
+Athena fits this batch workflow without a dedicated warehouse cluster, but cost and performance should be assessed from actual queries and infrastructure usage.
+
+For agent selection on this stack or future projects, see the [subagent reference](docs/subagent-reference.md).
