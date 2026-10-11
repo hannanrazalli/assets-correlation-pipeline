@@ -2,7 +2,13 @@
 
 This project collects daily prices for the S&P 500, KLCI, Bitcoin and GLD, then stores them in S3. Airflow runs the data loaders and Glue crawlers. dbt transforms the data in Athena. It converts prices to MYR, calculates daily returns and compares each pair of assets using rolling correlations over 30 shared observations.
 
-The output helps you explore how these assets move in relation to each other. It does not measure portfolio risk or send alerts when correlations cross a threshold. If an exchange rate is missing, the pipeline uses `1.0`. The affected USD prices are then not valid MYR conversions. Read [Limitations](#limitations) before using the results.
+## Project question
+
+How have the daily returns of selected asset proxies moved together over time, and what might that tell us when considering diversification? This project calculates rolling pairwise correlations over 30 dates on which all four assets have returns.
+
+A correlation near 1 means two return series tended to move in the same direction over those observations; near -1 means they tended to move in opposite directions; near 0 means little linear relationship. Correlation can help explore diversification, but it does not by itself show that a portfolio is diversified, measure portfolio risk, prove that one asset caused another to move or predict future returns. This project does not send alerts when correlations cross a threshold.
+
+The pipeline converts USD prices to MYR. If an exchange rate is missing, it currently uses `1.0`, so the affected USD prices are not valid MYR conversions. Read [Limitations](#limitations) before interpreting results.
 
 ![dbt](https://img.shields.io/badge/Transformation-dbt_Core-orange)
 ![Airflow](https://img.shields.io/badge/Orchestration-Apache_Airflow-blue)
@@ -108,6 +114,8 @@ GitHub Actions runs Ruff, checks DAG imports with Airflow's `DagBag`, and runs `
 
 The CD workflow runs when code is pushed to `main` or when started manually. It temporarily allows the GitHub runner to connect to EC2 over SSH. It updates the remote checkout to `origin/main`, restarts Astro when image inputs change, checks Airflow health and then tries to remove the temporary network rule. It requires GitHub secrets and an existing EC2 setup. The workflow file alone does not confirm that a deployment succeeded. CD is not explicitly set to wait for CI to finish.
 
+![Successful Airflow DAG run](docs/images/airflow-dag-success.png)
+
 Required GitHub secrets are `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_SG_ID`, `EC2_HOST`, `EC2_USER` and `EC2_SSH_KEY`. The remote checkout is reset to `origin/main`, so deployment is intended for a dedicated checkout without local edits.
 
 Slack notifications use the `slack_alert_conn` connection. They include task details and an Airflow log link. Delivery is best effort. The callback does not set a request timeout or check the HTTP response.
@@ -178,9 +186,28 @@ These commands write to AWS. To validate without affecting your normal data, use
 
 ## Inspecting results
 
-After a successful warehouse run, check `fct_assets_rpt` for prices, returns and the six correlation columns. This repository does not include a results snapshot to support claims about average correlation or diversification.
+The analytical success criterion is that `fct_assets_rpt` returns dated rows with the six pairwise correlation columns populated after at least 30 shared return observations. The `_30d` suffix means 30 matched observations, not necessarily 30 calendar days. A successful Airflow run shows that the workflow completed; it does not by itself prove the output is complete or the correlations are statistically reliable.
 
-When you share results, include the query, date range, number of matched observations, how missing data was handled and evidence of the run. Correlation alone does not prove that a portfolio is protected or that one asset causes another to move.
+Use this Athena query to inspect the latest available correlations (replace `asset_correlation` if `DBT_TARGET_SCHEMA` has another value):
+
+```sql
+SELECT
+    price_date,
+    corr_sp500_klse_30d,
+    corr_sp500_btc_30d,
+    corr_sp500_gold_30d,
+    corr_klse_btc_30d,
+    corr_klse_gold_30d,
+    corr_btc_gold_30d
+FROM asset_correlation.fct_assets_rpt
+WHERE corr_sp500_klse_30d IS NOT NULL
+ORDER BY price_date DESC
+LIMIT 10;
+```
+
+![Athena correlation query results](docs/images/athena-correlation-results.png)
+
+Read each row as a date-specific snapshot of how that pair's returns moved together across the rolling window. The model uses dates where all four assets have returns, so missing data affects which observations are included. Do not claim specific correlation patterns until you have run the query against your data.
 
 ## Limitations
 
@@ -192,4 +219,4 @@ When you share results, include the query, date range, number of matched observa
 - **Expansion:** New tickers require updates to ingestion, seeds, staging unions, tests, return pivots, correlation expressions and reporting columns.
 - **Operations:** The project does not include live warehouse integration tests, FX quality checks, a BI dashboard or correlation alerts. AWS cost has not been measured. Athena, Glue, S3 and EC2 all contribute to it.
 
-Athena runs this batch workflow without a dedicated warehouse cluster. Measure cost and performance using real queries and infrastructure usage.
+This batch workflow uses Athena without a dedicated warehouse cluster. Cost and performance have not been benchmarked; they depend on query patterns and the AWS resources used by the pipeline.
