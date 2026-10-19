@@ -61,3 +61,17 @@ models:
       - name: price_date
         tests:
           - not_null
+
+  - name: dim_dates
+    columns:
+      - name: price_date
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_assets_rpt
+    columns:
+      - name: price_date
+        tests:
+          - unique
+          - not_null

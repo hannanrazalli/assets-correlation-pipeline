@@ -14,7 +14,7 @@ The pipeline converts USD prices to MYR. If an exchange rate is missing, it curr
 ![Airflow](https://img.shields.io/badge/Orchestration-Apache_Airflow-blue)
 ![Athena](https://img.shields.io/badge/Query-AWS_Athena-FF9900)
 ![Iceberg](https://img.shields.io/badge/Fact_table-Apache_Iceberg-blue)
-![Configured tests](https://img.shields.io/badge/dbt_tests-32_configured-lightgrey)
+![Configured tests](https://img.shields.io/badge/dbt_tests-36_configured-lightgrey)
 
 ## Data sources
 
@@ -98,14 +98,14 @@ The audit macro adds metadata to staging, intermediate and `fct_assets` models. 
 
 ## Validation and deployment
 
-There are 32 configured generic dbt tests:
+There are 36 configured generic dbt tests:
 
 | Layer | Count | Checks |
 | --- | --- | --- |
 | Sources | 4 | Non-null source dates |
 | Staging | 9 | Required fields and expected currencies/tickers |
 | Intermediate | 4 | Unique, non-null surrogate keys |
-| Marts | 13 | Fact keys, relationships, converted prices and correlation outputs |
+| Marts | 17 | Fact keys, relationships, converted prices, correlations and calendar/report dates |
 | Seed | 2 | Unique, non-null ticker |
 
 This table lists configured tests. It does not show that the tests have passed. The tests also do not confirm that data is current or complete, that currency conversion is correct, or that results are statistically valid. An empty correlation view can pass non-null checks because it has no rows to fail them.
